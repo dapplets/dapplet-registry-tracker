@@ -53,17 +53,12 @@ function prettifyData(arr) {
 }
 
 async function start() {
-    console.log(1)
     const resp = await httpRequest(`https://api-rinkeby.etherscan.io/api?module=account&action=txlist&address=0xb76b02b35ad7cb71e2061056915e521e8f05c130&startblock=0&endblock=99999999&page=1&offset=1000&sort=asc&apikey=${ETHERSCAN_API_KEY}`);
     const inter = new ethers.utils.Interface(abi);
-    console.log(2)
     const client = new Client();
     await client.login(DISCORD_BOT_KEY);
-    console.log(3)
     const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-    console.log(4)
     const rawMessages = await channel.messages.fetch({ limit: 50 });
-    console.log(5)
     const botMessages = Array.from(rawMessages.values())
         .filter(x => x.author.id === DISCORD_BOT_ID)
         .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
