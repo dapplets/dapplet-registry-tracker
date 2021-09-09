@@ -8,6 +8,27 @@ dotenv.config();
 
 const { DISCORD_BOT_ID, DISCORD_BOT_KEY, DISCORD_CHANNEL_ID, TX_TIMESTAMP_AFTER, ETHERSCAN_API_KEY } = process.env;
 
+function myPromise(timeout, callback) {
+    return new Promise((resolve, reject) => {
+        // Set up the timeout
+        const timer = setTimeout(() => {
+            reject(new Error(`Promise timed out after ${timeout} ms`));
+        }, timeout);
+
+        // Set up the real work
+        callback(
+            (value) => {
+                clearTimeout(timer);
+                resolve(value);
+            },
+            (error) => {
+                clearTimeout(timer);
+                reject(error);
+            }
+        );
+    });
+}
+
 async function httpRequest(url) {
     return new Promise((resolve, reject) => {
         https.get(url, res => {
@@ -32,13 +53,17 @@ function prettifyData(arr) {
 }
 
 async function start() {
+    console.log(1)
     const resp = await httpRequest(`https://api-rinkeby.etherscan.io/api?module=account&action=txlist&address=0xb76b02b35ad7cb71e2061056915e521e8f05c130&startblock=0&endblock=99999999&page=1&offset=1000&sort=asc&apikey=${ETHERSCAN_API_KEY}`);
     const inter = new ethers.utils.Interface(abi);
-
+    console.log(2)
     const client = new Client();
     await client.login(DISCORD_BOT_KEY);
+    console.log(3)
     const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
+    console.log(4)
     const rawMessages = await channel.messages.fetch({ limit: 50 });
+    console.log(5)
     const botMessages = Array.from(rawMessages.values())
         .filter(x => x.author.id === DISCORD_BOT_ID)
         .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
@@ -66,12 +91,12 @@ async function start() {
     }
 }
 
-start()
+myPromise(45000, () => start())
     .then(() => {
         console.log('done');
         process.exit();
     })
-    .catch(() => {
-        console.log('error');
+    .catch((e) => {
+        console.log(e);
         process.exit();
     });
