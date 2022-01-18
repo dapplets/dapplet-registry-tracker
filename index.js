@@ -3,6 +3,11 @@ const abi = require('./abi.json');
 const https = require('https');
 const { Client } = require('discord.js');
 const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
+
+const STATE_FILE_PATH = path.join(__dirname, 'state.json');
+const REGISTRY_ADDRESS = '0x55627158187582228031eD8DF9893d76318D084E';
 
 dotenv.config();
 
@@ -16,16 +21,13 @@ function myPromise(timeout, callback) {
         }, timeout);
 
         // Set up the real work
-        callback(
-            (value) => {
-                clearTimeout(timer);
-                resolve(value);
-            },
-            (error) => {
-                clearTimeout(timer);
-                reject(error);
-            }
-        );
+        callback().then((value) => {
+            clearTimeout(timer);
+            resolve(value);
+        }).catch((error) => {
+            clearTimeout(timer);
+            reject(error);
+        });
     });
 }
 
@@ -52,36 +54,66 @@ function prettifyData(arr) {
     return obj;
 }
 
-async function start() {
-    const resp = await httpRequest(`https://api-rinkeby.etherscan.io/api?module=account&action=txlist&address=0xb76b02b35ad7cb71e2061056915e521e8f05c130&startblock=0&endblock=99999999&page=1&offset=1000&sort=asc&apikey=${ETHERSCAN_API_KEY}`);
+function getState() {
+    if (fs.existsSync(STATE_FILE_PATH)) {
+        const json = fs.readFileSync(STATE_FILE_PATH);
+        return JSON.parse(json);
+    } else {
+        return {
+            lastBlock: 0
+        };
+    }
+}
+
+function setState(state) {
+    const json = JSON.stringify(state, null, 2);
+    fs.writeFileSync(STATE_FILE_PATH, json);
+}
+
+function constructMessage(tx) {
     const inter = new ethers.utils.Interface(abi);
+    const parsed = inter.parseTransaction({ data: tx.input });
+
+    switch (parsed.name) {
+        case "addModuleInfo": 
+            return `New module published.\n\`${parsed.args.mInfo.name}\``;
+        case "addModuleVersion": 
+            return `Update of \`${parsed.args.mod_name}\` is available\nv${parsed.args.vInfo.major}.${parsed.args.vInfo.minor}.${parsed.args.vInfo.patch} in ${parsed.args.vInfo.branch}`;
+        case "transferOwnership": 
+            return `Ownership of \`${parsed.args.mod_name}\` is transfered to \`${parsed.args.newUserId}\``;
+        case "addContextId": 
+            return `Context ID \`${parsed.args.contextId}\` added to \`${parsed.args.mod_name}\``;
+        case "removeContextId": 
+            return `Context ID \`${parsed.args.contextId}\` removed from \`${parsed.args.mod_name}\``;
+        default:
+            return `${parsed.name}\n\`\`\`\n${JSON.stringify(prettifyData(parsed.args), null, 2)}\n\`\`\`\ntx:${tx.hash}`;
+    }
+}
+
+async function start() {
+    const state = getState();
+
+    const startBlock = state.lastBlock + 1;
+    const resp = await httpRequest(`https://api-goerli.etherscan.io/api?module=account&action=txlist&address=${REGISTRY_ADDRESS}&startblock=${startBlock}&endblock=99999999&page=1&offset=1000&sort=asc&apikey=${ETHERSCAN_API_KEY}`);
+    const transactions = resp.result;
+
+    if (transactions.length === 0) {
+        console.log('No transactions');
+        return;
+    }
+
     const client = new Client();
     await client.login(DISCORD_BOT_KEY);
     const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
-    const rawMessages = await channel.messages.fetch({ limit: 50 });
-    const botMessages = Array.from(rawMessages.values())
-        .filter(x => x.author.id === DISCORD_BOT_ID)
-        .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
-    const lastBotMessageTxHash = /tx:(0x[0-9a-fA-F]{64})/gm.exec(botMessages[0]?.content ?? '')?.[1];
 
-    const transactions = resp.result.filter(x => x.timeStamp >= Number(TX_TIMESTAMP_AFTER));
-
-    let skip = true;
     for (const tx of transactions) {
-        if (!lastBotMessageTxHash || !skip) {
-            try {
-                const parsed = inter.parseTransaction({ data: tx.input });
-                const message = `Registry Tracker\n${parsed.name}\n\`\`\`\n${JSON.stringify(prettifyData(parsed.args), null, 2)}\n\`\`\`\ntx:${tx.hash}`;
-                await channel.send(message);
-            } catch (err) {
-                console.error(err);
-            }
-        } else {
-            console.log('skip ' + tx.hash);
-        }
-
-        if (tx.hash.toLowerCase() === lastBotMessageTxHash.toLowerCase()) {
-            skip = false;
+        try {
+            const message = constructMessage(tx);
+            await channel.send(message);
+            console.log('Message sent:\n' + message + '\n');
+            setState({ lastBlock: Number(tx.blockNumber) });
+        } catch (err) {
+            console.error(err);
         }
     }
 }
